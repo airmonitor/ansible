@@ -36,6 +36,9 @@ options:
         description:
             - Determines how long InfluxDB should keep the data
         required: true
+    shard_duration:
+        description:
+            -  Determines how much time each shard group spans
     replication:
         description:
             - Determines how many independent copies of each point are stored in the cluster
@@ -55,6 +58,7 @@ EXAMPLES = '''
       database_name: "{{influxdb_database_name}}"
       policy_name: test
       duration: 1h
+      shard_duration: 1h
       replication: 1
       ssl: yes
       validate_certs: yes
@@ -65,6 +69,7 @@ EXAMPLES = '''
       database_name: "{{influxdb_database_name}}"
       policy_name: test
       duration: 1d
+      shard_duration: 1d
       replication: 1
 
 - name: create 1 week retention policy
@@ -81,6 +86,7 @@ EXAMPLES = '''
       database_name: "{{influxdb_database_name}}"
       policy_name: test
       duration: INF
+      shard_duration: 1000w
       replication: 1
       ssl: no
       validate_certs: no
@@ -89,8 +95,6 @@ EXAMPLES = '''
 RETURN = '''
 # only defaults
 '''
-
-import re
 
 try:
     import requests.exceptions
@@ -124,12 +128,13 @@ def create_retention_policy(module, client):
     database_name = module.params['database_name']
     policy_name = module.params['policy_name']
     duration = module.params['duration']
+    shard_duration = module.params['shard_duration']
     replication = module.params['replication']
     default = module.params['default']
 
     if not module.check_mode:
         try:
-            client.create_retention_policy(policy_name, duration, replication, database_name, default)
+            client.create_retention_policy(policy_name, duration, shard_duration, replication, database_name, default)
         except exceptions.InfluxDBClientError as e:
             module.fail_json(msg=e.content)
     module.exit_json(changed=True)
@@ -139,28 +144,18 @@ def alter_retention_policy(module, client, retention_policy):
     database_name = module.params['database_name']
     policy_name = module.params['policy_name']
     duration = module.params['duration']
+    shard_duration = module.params['shard_duration']
     replication = module.params['replication']
     default = module.params['default']
-    duration_regexp = re.compile(r'(\d+)([hdw]{1})|(^INF$){1}')
     changed = False
 
-    duration_lookup = duration_regexp.search(duration)
-
-    if duration_lookup.group(2) == 'h':
-        influxdb_duration_format = '%s0m0s' % duration
-    elif duration_lookup.group(2) == 'd':
-        influxdb_duration_format = '%sh0m0s' % (int(duration_lookup.group(1)) * 24)
-    elif duration_lookup.group(2) == 'w':
-        influxdb_duration_format = '%sh0m0s' % (int(duration_lookup.group(1)) * 24 * 7)
-    elif duration == 'INF':
-        influxdb_duration_format = '0'
-
-    if (not retention_policy['duration'] == influxdb_duration_format or
+    if (not retention_policy['duration'] == duration or
             not retention_policy['replicaN'] == int(replication) or
-            not retention_policy['default'] == default):
+            not retention_policy['default'] == default or
+            not retention_policy['shard_duration'] == shard_duration):
         if not module.check_mode:
             try:
-                client.alter_retention_policy(policy_name, database_name, duration, replication, default)
+                client.alter_retention_policy(policy_name, database_name, duration, replication, default, shard_duration)
             except exceptions.InfluxDBClientError as e:
                 module.fail_json(msg=e.content)
         changed = True
@@ -173,6 +168,7 @@ def main():
         database_name=dict(required=True, type='str'),
         policy_name=dict(required=True, type='str'),
         duration=dict(required=True, type='str'),
+        shard_duration=dict(required=True, type='str'),
         replication=dict(required=True, type='int'),
         default=dict(default=False, type='bool')
     )
